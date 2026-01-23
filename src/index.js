@@ -200,17 +200,26 @@ class WebsiteStreamer {
     
     const rtmpUrl = `${CONFIG.YOUTUBE_RTMP_URL}/${CONFIG.STREAM_KEY}`;
     
+    log.info(`RTMP URL: ${CONFIG.YOUTUBE_RTMP_URL}/****`);
+    
     // FFmpeg аргументы для стриминга на YouTube
     const ffmpegArgs = [
-      // Входные параметры
+      // Глобальные параметры
       '-y',                           // Перезаписывать выходные файлы
+      '-loglevel', 'warning',         // Уровень логирования
+      
+      // Вход 1: Видео из stdin (JPEG кадры)
       '-f', 'image2pipe',             // Формат входа - последовательность изображений
       '-framerate', String(CONFIG.FPS), // Входной FPS
-      '-i', '-',                      // Читать из stdin
+      '-i', 'pipe:0',                 // Читать из stdin
+      
+      // Вход 2: Тишина для аудио (YouTube требует аудиодорожку)
+      '-f', 'lavfi',
+      '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
       
       // Кодирование видео
       '-c:v', 'libx264',              // H.264 кодек
-      '-preset', 'veryfast',          // Пресет скорости (veryfast для realtime)
+      '-preset', 'ultrafast',         // Самый быстрый пресет для realtime
       '-tune', 'zerolatency',         // Оптимизация для низкой задержки
       '-pix_fmt', 'yuv420p',          // Формат пикселей для совместимости
       '-g', String(CONFIG.FPS * 2),   // GOP размер = 2 секунды
@@ -218,16 +227,14 @@ class WebsiteStreamer {
       '-maxrate', CONFIG.VIDEO_BITRATE, // Максимальный битрейт
       '-bufsize', `${parseInt(CONFIG.VIDEO_BITRATE) * 2}k`, // Размер буфера
       
-      // Масштабирование (на случай если скриншот другого размера)
-      '-vf', `scale=${CONFIG.WIDTH}:${CONFIG.HEIGHT}:force_original_aspect_ratio=decrease,pad=${CONFIG.WIDTH}:${CONFIG.HEIGHT}:(ow-iw)/2:(oh-ih)/2`,
-      
-      // Аудио - тишина (YouTube требует аудиодорожку)
-      '-f', 'lavfi',
-      '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+      // Кодирование аудио
       '-c:a', 'aac',
       '-b:a', '128k',
       '-ar', '44100',
-      '-shortest',                    // Остановить когда закончится видео
+      
+      // Маппинг потоков
+      '-map', '0:v',                  // Видео из первого входа
+      '-map', '1:a',                  // Аудио из второго входа
       
       // Выходные параметры
       '-f', 'flv',                    // FLV формат для RTMP
@@ -249,15 +256,17 @@ class WebsiteStreamer {
     // Обработка stderr FFmpeg (основной вывод)
     this.ffmpeg.stderr.on('data', (data) => {
       const message = data.toString();
-      // Фильтруем спам от FFmpeg, показываем только важное
-      if (message.includes('Error') || message.includes('error')) {
-        log.error('FFmpeg:', message);
+      // Показываем все важные сообщения
+      if (message.includes('Error') || message.includes('error') || message.includes('failed') || message.includes('Connection')) {
+        log.error('FFmpeg:', message.trim());
       } else if (message.includes('frame=')) {
-        // Показываем прогресс каждые 100 кадров
+        // Показываем прогресс каждые 300 кадров (~10 секунд)
         const match = message.match(/frame=\s*(\d+)/);
-        if (match && parseInt(match[1]) % 100 === 0) {
+        if (match && parseInt(match[1]) % 300 === 0) {
           log.info(`FFmpeg прогресс: ${message.trim().split('\n')[0]}`);
         }
+      } else if (message.includes('Output') || message.includes('Stream') || message.includes('Video:') || message.includes('Audio:')) {
+        log.info('FFmpeg:', message.trim());
       }
     });
 
