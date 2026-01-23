@@ -26,15 +26,15 @@ const CONFIG = {
   YOUTUBE_RTMP_URL: process.env.YOUTUBE_RTMP_URL || 'rtmp://a.rtmp.youtube.com/live2',
   STREAM_KEY: process.env.STREAM_KEY,
   
-  // Разрешение видео (720p - оптимально для Puppeteer)
-  WIDTH: parseInt(process.env.WIDTH) || 1280,
-  HEIGHT: parseInt(process.env.HEIGHT) || 720,
+  // Разрешение видео (Full HD 1080p с CDP Screencast)
+  WIDTH: parseInt(process.env.WIDTH) || 1920,
+  HEIGHT: parseInt(process.env.HEIGHT) || 1080,
   
-  // FPS трансляции (12 - реалистично для захвата скриншотов)
-  FPS: parseInt(process.env.FPS) || 12,
+  // FPS трансляции (24 fps - плавное видео с CDP)
+  FPS: parseInt(process.env.FPS) || 24,
   
   // Битрейт видео (в kbps)
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '2500k',
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '4500k',
   
   // Интервал между скриншотами (мс) = 1000 / FPS
   get FRAME_INTERVAL() {
@@ -99,6 +99,7 @@ class WebsiteStreamer {
   constructor() {
     this.browser = null;
     this.page = null;
+    this.cdpSession = null;
     this.ffmpeg = null;
     this.isRunning = false;
     this.frameCount = 0;
@@ -312,51 +313,21 @@ class WebsiteStreamer {
   }
 
   /**
-   * Захват и отправка кадра
+   * Захват и отправка кадра (используется только как fallback)
    */
   async captureAndSendFrame() {
     if (!this.page || !this.ffmpeg || !this.ffmpeg.stdin.writable) {
-      if (this.frameCount === 0) {
-        log.warn('FFmpeg stdin не готов');
-      }
       return false;
     }
 
     try {
-      // Делаем скриншот в формате JPEG
       const screenshot = await this.page.screenshot({
         type: 'jpeg',
-        quality: 80, // Баланс качества и скорости
+        quality: 80,
         fullPage: false,
       });
 
-      // Логируем первый кадр
-      if (this.frameCount === 0) {
-        log.info(`Первый кадр захвачен, размер: ${screenshot.length} байт`);
-      }
-
-      // Отправляем в FFmpeg
-      return new Promise((resolve) => {
-        const canWrite = this.ffmpeg.stdin.write(screenshot, (error) => {
-          if (error) {
-            log.error('Ошибка записи в FFmpeg:', error.message);
-            resolve(false);
-          } else {
-            this.frameCount++;
-            // Логируем каждые 30 кадров (1 сек)
-            if (this.frameCount % 30 === 0) {
-              log.info(`Отправлено кадров: ${this.frameCount}`);
-            }
-            resolve(true);
-          }
-        });
-
-        if (!canWrite) {
-          // Буфер переполнен, ждём drain
-          log.warn('FFmpeg буфер полон, ожидание...');
-          this.ffmpeg.stdin.once('drain', () => resolve(true));
-        }
-      });
+      return this.sendFrameToFFmpeg(screenshot);
     } catch (error) {
       log.error('Ошибка захвата кадра:', error.message);
       return false;
@@ -364,23 +335,82 @@ class WebsiteStreamer {
   }
 
   /**
-   * Основной цикл захвата кадров
+   * Отправка кадра в FFmpeg
    */
-  async startCapturing() {
-    log.info('Запуск захвата кадров...');
-    this.isRunning = true;
-    
-    while (this.isRunning) {
-      const startTime = Date.now();
+  sendFrameToFFmpeg(frameData) {
+    if (!this.ffmpeg || !this.ffmpeg.stdin.writable) {
+      return false;
+    }
+
+    try {
+      const canWrite = this.ffmpeg.stdin.write(frameData);
+      this.frameCount++;
       
-      // Захватываем и отправляем кадр
-      const success = await this.captureAndSendFrame();
-      
-      if (!success && this.isRunning) {
-        log.warn('Не удалось отправить кадр, пропускаем...');
+      // Логируем каждые 30 кадров
+      if (this.frameCount % 30 === 0) {
+        log.info(`Отправлено кадров: ${this.frameCount}`);
+      }
+
+      if (!canWrite) {
+        // Буфер переполнен - пропускаем кадры до drain
+        return new Promise((resolve) => {
+          this.ffmpeg.stdin.once('drain', () => resolve(true));
+        });
       }
       
-      // Периодически обновляем страницу
+      return true;
+    } catch (error) {
+      log.error('Ошибка записи в FFmpeg:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Запуск CDP Screencast - нативный захват экрана браузера
+   * Работает в 3-5 раз быстрее чем page.screenshot()
+   */
+  async startScreencast() {
+    log.info('Запуск CDP Screencast для быстрого захвата...');
+    
+    // Получаем CDP сессию
+    this.cdpSession = await this.page.target().createCDPSession();
+    
+    // Обработчик кадров screencast
+    this.cdpSession.on('Page.screencastFrame', async (frame) => {
+      if (!this.isRunning || !this.ffmpeg || !this.ffmpeg.stdin.writable) {
+        return;
+      }
+
+      try {
+        // Декодируем base64 кадр в Buffer
+        const frameBuffer = Buffer.from(frame.data, 'base64');
+        
+        // Отправляем в FFmpeg
+        this.sendFrameToFFmpeg(frameBuffer);
+        
+        // Подтверждаем получение кадра (важно для продолжения потока)
+        await this.cdpSession.send('Page.screencastFrameAck', {
+          sessionId: frame.sessionId,
+        });
+      } catch (error) {
+        log.error('Ошибка обработки screencast кадра:', error.message);
+      }
+    });
+
+    // Запускаем screencast
+    await this.cdpSession.send('Page.startScreencast', {
+      format: 'jpeg',
+      quality: 80,
+      maxWidth: CONFIG.WIDTH,
+      maxHeight: CONFIG.HEIGHT,
+      everyNthFrame: 1, // Каждый кадр
+    });
+
+    log.info('CDP Screencast запущен');
+    this.isRunning = true;
+
+    // Поддерживаем процесс активным и проверяем обновление страницы
+    while (this.isRunning) {
       await this.refreshPageIfNeeded();
       
       // Логируем статистику каждые 30 секунд
@@ -388,13 +418,22 @@ class WebsiteStreamer {
         log.info(`Статистика: отправлено ${this.frameCount} кадров`);
       }
       
-      // Поддерживаем стабильный FPS
-      const elapsed = Date.now() - startTime;
-      const delay = Math.max(0, CONFIG.FRAME_INTERVAL - elapsed);
-      
-      if (delay > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  /**
+   * Остановка CDP Screencast
+   */
+  async stopScreencast() {
+    if (this.cdpSession) {
+      try {
+        await this.cdpSession.send('Page.stopScreencast');
+        await this.cdpSession.detach();
+      } catch (e) {
+        // Игнорируем ошибки при остановке
       }
+      this.cdpSession = null;
     }
   }
 
@@ -406,6 +445,7 @@ class WebsiteStreamer {
       log.info('========================================');
       log.info('Запуск YouTube Website Streamer');
       log.info('========================================');
+      log.info('Режим: CDP Screencast (Full HD)');
       
       await this.startBrowser();
       await this.loadPage();
@@ -414,7 +454,8 @@ class WebsiteStreamer {
       // Даём FFmpeg время на инициализацию
       await new Promise((resolve) => setTimeout(resolve, 2000));
       
-      await this.startCapturing();
+      // Используем CDP Screencast вместо screenshot loop
+      await this.startScreencast();
       
     } catch (error) {
       log.error('Критическая ошибка при запуске:', error.message);
@@ -429,6 +470,9 @@ class WebsiteStreamer {
   async stop() {
     log.info('Остановка стримера...');
     this.isRunning = false;
+
+    // Останавливаем CDP Screencast
+    await this.stopScreencast();
 
     // Закрываем FFmpeg
     if (this.ffmpeg) {
