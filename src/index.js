@@ -26,15 +26,15 @@ const CONFIG = {
   YOUTUBE_RTMP_URL: process.env.YOUTUBE_RTMP_URL || 'rtmp://a.rtmp.youtube.com/live2',
   STREAM_KEY: process.env.STREAM_KEY,
   
-  // Разрешение видео (Full HD 1080p)
-  WIDTH: parseInt(process.env.WIDTH) || 1920,
-  HEIGHT: parseInt(process.env.HEIGHT) || 1080,
+  // Разрешение видео (720p - оптимально для Puppeteer)
+  WIDTH: parseInt(process.env.WIDTH) || 1280,
+  HEIGHT: parseInt(process.env.HEIGHT) || 720,
   
-  // FPS трансляции (15 - оптимально для захвата скриншотов)
-  FPS: parseInt(process.env.FPS) || 15,
+  // FPS трансляции (12 - реалистично для захвата скриншотов)
+  FPS: parseInt(process.env.FPS) || 12,
   
   // Битрейт видео (в kbps)
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '3000k',
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '2500k',
   
   // Интервал между скриншотами (мс) = 1000 / FPS
   get FRAME_INTERVAL() {
