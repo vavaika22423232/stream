@@ -25,15 +25,15 @@ const CONFIG = {
   YOUTUBE_RTMP_URL: process.env.YOUTUBE_RTMP_URL || 'rtmp://a.rtmp.youtube.com/live2',
   STREAM_KEY: process.env.STREAM_KEY,
   
-  // Разрешение видео (720p для стабильности)
-  WIDTH: parseInt(process.env.WIDTH) || 1280,
-  HEIGHT: parseInt(process.env.HEIGHT) || 720,
+  // Разрешение видео (480p для слабых серверов)
+  WIDTH: parseInt(process.env.WIDTH) || 854,
+  HEIGHT: parseInt(process.env.HEIGHT) || 480,
   
-  // FPS трансляции (10 для стабильности на слабых серверах)
-  FPS: parseInt(process.env.FPS) || 10,
+  // FPS трансляции (6 для стабильности на слабых серверах)
+  FPS: parseInt(process.env.FPS) || 6,
   
   // Битрейт видео (в kbps)
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '1500k',
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '800k',
   
   // Интервал между скриншотами (мс) = 1000 / FPS
   get FRAME_INTERVAL() {
