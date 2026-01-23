@@ -206,7 +206,7 @@ class WebsiteStreamer {
     const ffmpegArgs = [
       // Глобальные параметры
       '-y',                           // Перезаписывать выходные файлы
-      '-loglevel', 'warning',         // Уровень логирования
+      '-loglevel', 'info',            // Полное логирование
       
       // Вход 1: Видео из stdin (JPEG кадры)
       '-f', 'image2pipe',             // Формат входа - последовательность изображений
@@ -255,18 +255,10 @@ class WebsiteStreamer {
 
     // Обработка stderr FFmpeg (основной вывод)
     this.ffmpeg.stderr.on('data', (data) => {
-      const message = data.toString();
-      // Показываем все важные сообщения
-      if (message.includes('Error') || message.includes('error') || message.includes('failed') || message.includes('Connection')) {
-        log.error('FFmpeg:', message.trim());
-      } else if (message.includes('frame=')) {
-        // Показываем прогресс каждые 300 кадров (~10 секунд)
-        const match = message.match(/frame=\s*(\d+)/);
-        if (match && parseInt(match[1]) % 300 === 0) {
-          log.info(`FFmpeg прогресс: ${message.trim().split('\n')[0]}`);
-        }
-      } else if (message.includes('Output') || message.includes('Stream') || message.includes('Video:') || message.includes('Audio:')) {
-        log.info('FFmpeg:', message.trim());
+      const message = data.toString().trim();
+      // Показываем ВСЕ сообщения FFmpeg для отладки
+      if (message) {
+        log.info('FFmpeg:', message);
       }
     });
 
