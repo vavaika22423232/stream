@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     dumb-init \
     procps \
+    curl \
     # Очистка кеша
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
@@ -53,6 +54,14 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 # Копируем исходный код
 COPY --chown=streamer:streamer src/ ./src/
+
+# Создаём папку для музыки
+# Музыку можно добавить: 1) положить music/background.mp3 в репозиторий
+#                        2) задать MUSIC_URL в переменных окружения
+RUN mkdir -p ./music
+
+# Копируем музыку если есть в репозитории
+COPY --chown=streamer:streamer music/ ./music/ 2>/dev/null || true
 
 # Переключаемся на непривилегированного пользователя
 USER streamer

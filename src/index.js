@@ -14,6 +14,7 @@
 const puppeteer = require('puppeteer');
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 // ==================== КОНФИГУРАЦИЯ ====================
 
@@ -45,6 +46,12 @@ const CONFIG = {
   
   // Интервал обновления страницы для предотвращения утечек памяти (мс)
   PAGE_REFRESH_INTERVAL: parseInt(process.env.PAGE_REFRESH_INTERVAL) || 3600000, // 1 час
+  
+  // Путь к фоновой музыке (mp3)
+  MUSIC_PATH: process.env.MUSIC_PATH || path.join(__dirname, '..', 'music', 'background.mp3'),
+  
+  // Громкость музыки (0.0 - 1.0)
+  MUSIC_VOLUME: parseFloat(process.env.MUSIC_VOLUME) || 0.3,
 };
 
 // ==================== ЛОГИРОВАНИЕ ====================
@@ -190,6 +197,28 @@ class WebsiteStreamer {
   }
 
   /**
+   * Получить аргументы FFmpeg для аудио входа
+   * Если есть музыкальный файл - используем его, иначе тишина
+   */
+  getAudioInputArgs() {
+    const musicExists = fs.existsSync(CONFIG.MUSIC_PATH);
+    
+    if (musicExists) {
+      log.info(`Используем фоновую музыку: ${CONFIG.MUSIC_PATH}`);
+      return [
+        '-stream_loop', '-1',           // Бесконечный цикл музыки
+        '-i', CONFIG.MUSIC_PATH,        // Путь к mp3 файлу
+      ];
+    } else {
+      log.info('Музыкальный файл не найден, используем тишину');
+      return [
+        '-f', 'lavfi',
+        '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+      ];
+    }
+  }
+
+  /**
    * Запуск FFmpeg процесса
    * 
    * FFmpeg принимает последовательность JPEG изображений через stdin
@@ -216,9 +245,8 @@ class WebsiteStreamer {
       '-analyzeduration', '0',        // Не анализировать длительность
       '-i', 'pipe:0',                 // Читать из stdin
       
-      // Вход 2: Тишина для аудио (YouTube требует аудиодорожку)
-      '-f', 'lavfi',
-      '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+      // Вход 2: Аудио (музыка или тишина)
+      ...this.getAudioInputArgs(),
       
       // Кодирование видео
       '-c:v', 'libx264',              // H.264 кодек
