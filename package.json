@@ -1,0 +1,26 @@
+{
+  "name": "youtube-website-streamer",
+  "version": "1.0.0",
+  "description": "24/7 автоматическая трансляция сайта на YouTube Live через headless браузер",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "youtube",
+    "streaming",
+    "puppeteer",
+    "ffmpeg",
+    "rtmp",
+    "headless"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "puppeteer": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

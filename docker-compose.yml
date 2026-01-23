@@ -1,0 +1,46 @@
+# ===========================================
+# Docker Compose для локальной разработки
+# ===========================================
+# Использование:
+# docker-compose up -d
+# docker-compose logs -f
+# ===========================================
+
+version: '3.8'
+
+services:
+  streamer:
+    build: .
+    container_name: youtube-website-streamer
+    restart: always
+    
+    # Переменные окружения
+    environment:
+      - STREAM_KEY=${STREAM_KEY}
+      - TARGET_URL=${TARGET_URL:-https://neptun.in.ua}
+      - WIDTH=${WIDTH:-1920}
+      - HEIGHT=${HEIGHT:-1080}
+      - FPS=${FPS:-30}
+      - VIDEO_BITRATE=${VIDEO_BITRATE:-4500k}
+      - PAGE_REFRESH_INTERVAL=${PAGE_REFRESH_INTERVAL:-3600000}
+      - RESTART_DELAY=${RESTART_DELAY:-5000}
+    
+    # Ограничения ресурсов
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    
+    # Shared memory для Chromium
+    shm_size: '1gb'
+    
+    # Логирование
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,51 @@
+# ===========================================
+# Render.com конфигурация
+# ===========================================
+# Файл для автоматического деплоя на Render
+# ===========================================
+
+services:
+  # Background Worker для 24/7 стриминга
+  - type: worker
+    name: youtube-website-streamer
+    runtime: docker
+    
+    # Регион (выберите ближайший к YouTube серверам)
+    region: frankfurt  # или oregon, ohio, singapore
+    
+    # План (требуется минимум Standard для 24/7)
+    plan: standard
+    
+    # Переменные окружения
+    envVars:
+      # ОБЯЗАТЕЛЬНО: Ключ стрима YouTube
+      - key: STREAM_KEY
+        sync: false  # Ввести вручную в панели Render
+      
+      # URL сайта для трансляции
+      - key: TARGET_URL
+        value: https://neptun.in.ua
+      
+      # Разрешение
+      - key: WIDTH
+        value: 1920
+      - key: HEIGHT
+        value: 1080
+      
+      # FPS
+      - key: FPS
+        value: 30
+      
+      # Битрейт
+      - key: VIDEO_BITRATE
+        value: 4500k
+      
+      # Интервал обновления страницы (1 час)
+      - key: PAGE_REFRESH_INTERVAL
+        value: 3600000
+
+    # Dockerfile путь
+    dockerfilePath: ./Dockerfile
+    
+    # Автоматический деплой при push
+    autoDeploy: true
