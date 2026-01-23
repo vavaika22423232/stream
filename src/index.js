@@ -286,6 +286,9 @@ class WebsiteStreamer {
    */
   async captureAndSendFrame() {
     if (!this.page || !this.ffmpeg || !this.ffmpeg.stdin.writable) {
+      if (this.frameCount === 0) {
+        log.warn('FFmpeg stdin не готов');
+      }
       return false;
     }
 
@@ -297,6 +300,11 @@ class WebsiteStreamer {
         fullPage: false,
       });
 
+      // Логируем первый кадр
+      if (this.frameCount === 0) {
+        log.info(`Первый кадр захвачен, размер: ${screenshot.length} байт`);
+      }
+
       // Отправляем в FFmpeg
       return new Promise((resolve) => {
         const canWrite = this.ffmpeg.stdin.write(screenshot, (error) => {
@@ -305,12 +313,17 @@ class WebsiteStreamer {
             resolve(false);
           } else {
             this.frameCount++;
+            // Логируем каждые 30 кадров (1 сек)
+            if (this.frameCount % 30 === 0) {
+              log.info(`Отправлено кадров: ${this.frameCount}`);
+            }
             resolve(true);
           }
         });
 
         if (!canWrite) {
           // Буфер переполнен, ждём drain
+          log.warn('FFmpeg буфер полон, ожидание...');
           this.ffmpeg.stdin.once('drain', () => resolve(true));
         }
       });
