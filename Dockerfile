@@ -47,9 +47,9 @@ RUN groupadd -r streamer && useradd -r -g streamer -G audio,video streamer \
 # Рабочая директория
 WORKDIR /home/streamer/app
 
-# Копируем package.json и устанавливаем зависимости
+# Копируем package.json и package-lock.json, устанавливаем зависимости
 COPY --chown=streamer:streamer package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Копируем исходный код
 COPY --chown=streamer:streamer src/ ./src/
