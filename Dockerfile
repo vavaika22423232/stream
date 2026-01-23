@@ -61,7 +61,7 @@ COPY --chown=streamer:streamer src/ ./src/
 RUN mkdir -p ./music
 
 # Копируем музыку если есть в репозитории
-COPY --chown=streamer:streamer music/ ./music/ 2>/dev/null || true
+COPY --chown=streamer:streamer music/ ./music/
 
 # Переключаемся на непривилегированного пользователя
 USER streamer
