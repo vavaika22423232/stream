@@ -51,7 +51,7 @@ const CONFIG = {
   MUSIC_PATH: process.env.MUSIC_PATH || path.join(__dirname, '..', 'music', 'background.mp3'),
   
   // Громкость музыки (0.0 - 1.0)
-  MUSIC_VOLUME: parseFloat(process.env.MUSIC_VOLUME) || 0.5,
+  MUSIC_VOLUME: parseFloat(process.env.MUSIC_VOLUME) || 0.15,
 };
 
 // ==================== ЛОГИРОВАНИЕ ====================
