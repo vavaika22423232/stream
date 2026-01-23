@@ -29,11 +29,11 @@ const CONFIG = {
   WIDTH: parseInt(process.env.WIDTH) || 1920,
   HEIGHT: parseInt(process.env.HEIGHT) || 1080,
   
-  // FPS трансляции (30 для плавности)
-  FPS: parseInt(process.env.FPS) || 30,
+  // FPS трансляции (15 - оптимально для захвата скриншотов)
+  FPS: parseInt(process.env.FPS) || 15,
   
   // Битрейт видео (в kbps)
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '4500k',
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '3000k',
   
   // Интервал между скриншотами (мс) = 1000 / FPS
   get FRAME_INTERVAL() {
