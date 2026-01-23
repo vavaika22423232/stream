@@ -210,6 +210,7 @@ class WebsiteStreamer {
       
       // Вход 1: Видео из stdin (JPEG кадры)
       '-f', 'image2pipe',             // Формат входа - последовательность изображений
+      '-vcodec', 'mjpeg',             // Входной кодек - MJPEG
       '-framerate', String(CONFIG.FPS), // Входной FPS
       '-i', 'pipe:0',                 // Читать из stdin
       
@@ -238,7 +239,6 @@ class WebsiteStreamer {
       
       // Выходные параметры
       '-f', 'flv',                    // FLV формат для RTMP
-      '-flvflags', 'no_duration_filesize', // Флаги для стриминга
       rtmpUrl,                        // RTMP URL с ключом
     ];
 
