@@ -30,11 +30,11 @@ const CONFIG = {
   WIDTH: parseInt(process.env.WIDTH) || 1920,
   HEIGHT: parseInt(process.env.HEIGHT) || 1080,
   
-  // FPS трансляции (24 fps - плавное видео с CDP)
-  FPS: parseInt(process.env.FPS) || 24,
+  // FPS трансляции (18 fps - стабильное видео)
+  FPS: parseInt(process.env.FPS) || 18,
   
   // Битрейт видео (в kbps)
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '4500k',
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '3500k',
   
   // Интервал между скриншотами (мс) = 1000 / FPS
   get FRAME_INTERVAL() {
@@ -51,7 +51,7 @@ const CONFIG = {
   MUSIC_PATH: process.env.MUSIC_PATH || path.join(__dirname, '..', 'music', 'background.mp3'),
   
   // Громкость музыки (0.0 - 1.0)
-  MUSIC_VOLUME: parseFloat(process.env.MUSIC_VOLUME) || 0.3,
+  MUSIC_VOLUME: parseFloat(process.env.MUSIC_VOLUME) || 0.5,
 };
 
 // ==================== ЛОГИРОВАНИЕ ====================
@@ -259,10 +259,11 @@ class WebsiteStreamer {
       '-maxrate', CONFIG.VIDEO_BITRATE, // Максимальный битрейт
       '-bufsize', `${parseInt(CONFIG.VIDEO_BITRATE) * 2}k`, // Размер буфера
       
-      // Кодирование аудио
+      // Кодирование аудио с регулировкой громкости
       '-c:a', 'aac',
       '-b:a', '128k',
       '-ar', '44100',
+      '-af', `volume=${CONFIG.MUSIC_VOLUME}`,  // Громкость музыки
       
       // Маппинг потоков
       '-map', '0:v',                  // Видео из первого входа
