@@ -212,6 +212,8 @@ class WebsiteStreamer {
       '-f', 'image2pipe',             // Формат входа - последовательность изображений
       '-vcodec', 'mjpeg',             // Входной кодек - MJPEG
       '-framerate', String(CONFIG.FPS), // Входной FPS
+      '-probesize', '32',             // Минимальный размер для анализа
+      '-analyzeduration', '0',        // Не анализировать длительность
       '-i', 'pipe:0',                 // Читать из stdin
       
       // Вход 2: Тишина для аудио (YouTube требует аудиодорожку)
@@ -340,35 +342,32 @@ class WebsiteStreamer {
     log.info('Запуск захвата кадров...');
     this.isRunning = true;
     
-    const captureLoop = async () => {
-      while (this.isRunning) {
-        const startTime = Date.now();
-        
-        // Захватываем и отправляем кадр
-        await this.captureAndSendFrame();
-        
-        // Периодически обновляем страницу
-        await this.refreshPageIfNeeded();
-        
-        // Логируем статистику каждые 30 секунд
-        if (this.frameCount % (CONFIG.FPS * 30) === 0 && this.frameCount > 0) {
-          log.info(`Статистика: отправлено ${this.frameCount} кадров`);
-        }
-        
-        // Поддерживаем стабильный FPS
-        const elapsed = Date.now() - startTime;
-        const delay = Math.max(0, CONFIG.FRAME_INTERVAL - elapsed);
-        
-        if (delay > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
+    while (this.isRunning) {
+      const startTime = Date.now();
+      
+      // Захватываем и отправляем кадр
+      const success = await this.captureAndSendFrame();
+      
+      if (!success && this.isRunning) {
+        log.warn('Не удалось отправить кадр, пропускаем...');
       }
-    };
-
-    captureLoop().catch((error) => {
-      log.error('Ошибка в цикле захвата:', error.message);
-      this.stop();
-    });
+      
+      // Периодически обновляем страницу
+      await this.refreshPageIfNeeded();
+      
+      // Логируем статистику каждые 30 секунд
+      if (this.frameCount % (CONFIG.FPS * 30) === 0 && this.frameCount > 0) {
+        log.info(`Статистика: отправлено ${this.frameCount} кадров`);
+      }
+      
+      // Поддерживаем стабильный FPS
+      const elapsed = Date.now() - startTime;
+      const delay = Math.max(0, CONFIG.FRAME_INTERVAL - elapsed);
+      
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
   }
 
   /**
