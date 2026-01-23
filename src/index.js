@@ -167,7 +167,7 @@ class WebsiteStreamer {
       });
       
       // Ждём полную загрузку
-      await this.page.waitForTimeout(3000);
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
       log.info('Страница загружена');
       this.lastRefreshTime = Date.now();
