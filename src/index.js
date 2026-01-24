@@ -26,15 +26,15 @@ const CONFIG = {
   YOUTUBE_RTMP_URL: process.env.YOUTUBE_RTMP_URL || 'rtmp://a.rtmp.youtube.com/live2',
   STREAM_KEY: process.env.STREAM_KEY,
   
-  // Разрешение видео (Full HD 1080p с CDP Screencast)
-  WIDTH: parseInt(process.env.WIDTH) || 1920,
-  HEIGHT: parseInt(process.env.HEIGHT) || 1080,
+  // Разрешение видео (720p для стабильной скорости)
+  WIDTH: parseInt(process.env.WIDTH) || 1280,
+  HEIGHT: parseInt(process.env.HEIGHT) || 720,
   
-  // FPS трансляции (18 fps - стабильное видео)
-  FPS: parseInt(process.env.FPS) || 18,
+  // FPS трансляции (15 fps - стабильная скорость >= 1.0x)
+  FPS: parseInt(process.env.FPS) || 15,
   
   // Битрейт видео (в kbps)
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '3500k',
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '2500k',
   
   // Интервал между скриншотами (мс) = 1000 / FPS
   get FRAME_INTERVAL() {
@@ -104,6 +104,9 @@ class WebsiteStreamer {
     this.isRunning = false;
     this.frameCount = 0;
     this.lastRefreshTime = Date.now();
+    this.lastFrame = null; // Буфер последнего кадра для fallback
+    this.screencastActive = false; // Флаг активности screencast
+    this.lastFrameTime = 0; // Время последнего полученного кадра
   }
 
   /**
@@ -187,13 +190,48 @@ class WebsiteStreamer {
 
   /**
    * Периодическое обновление страницы для предотвращения утечек памяти
+   * При обновлении нужно перезапустить CDP Screencast
+   * ВАЖНО: Стрим продолжает работать даже если страница недоступна
    */
   async refreshPageIfNeeded() {
     const timeSinceRefresh = Date.now() - this.lastRefreshTime;
     
     if (timeSinceRefresh >= CONFIG.PAGE_REFRESH_INTERVAL) {
       log.info('Обновление страницы для предотвращения утечек памяти...');
-      await this.loadPage();
+      
+      try {
+        // Останавливаем текущий screencast
+        await this.stopScreencast();
+        
+        // Пытаемся перезагрузить страницу
+        try {
+          await this.loadPage();
+        } catch (loadError) {
+          log.error('Не удалось загрузить страницу, пробуем снова через 5 секунд:', loadError.message);
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          
+          try {
+            await this.loadPage();
+          } catch (retryError) {
+            log.error('Повторная загрузка не удалась, используем fallback кадр:', retryError.message);
+            // Не бросаем ошибку - продолжаем с fallback кадром
+          }
+        }
+        
+        // Пытаемся перезапустить screencast
+        try {
+          await this.restartScreencast();
+        } catch (screencastError) {
+          log.error('Не удалось перезапустить screencast:', screencastError.message);
+          // Стрим продолжит работать на fallback кадрах
+        }
+      } catch (error) {
+        log.error('Ошибка при обновлении страницы:', error.message);
+        // Не прерываем стрим!
+      }
+      
+      // Обновляем время в любом случае чтобы не спамить
+      this.lastRefreshTime = Date.now();
     }
   }
 
@@ -386,6 +424,10 @@ class WebsiteStreamer {
         // Декодируем base64 кадр в Buffer
         const frameBuffer = Buffer.from(frame.data, 'base64');
         
+        // Сохраняем как последний кадр для fallback
+        this.lastFrame = frameBuffer;
+        this.lastFrameTime = Date.now();
+        
         // Отправляем в FFmpeg
         this.sendFrameToFFmpeg(frameBuffer);
         
@@ -409,10 +451,19 @@ class WebsiteStreamer {
 
     log.info('CDP Screencast запущен');
     this.isRunning = true;
+    this.screencastActive = true;
 
     // Поддерживаем процесс активным и проверяем обновление страницы
     while (this.isRunning) {
-      await this.refreshPageIfNeeded();
+      try {
+        await this.refreshPageIfNeeded();
+      } catch (error) {
+        log.error('Ошибка при обновлении страницы:', error.message);
+        // Продолжаем работу, не падаем
+      }
+      
+      // Проверяем, приходят ли кадры от screencast
+      await this.checkAndSendFallbackFrame();
       
       // Логируем статистику каждые 30 секунд
       if (this.frameCount % (CONFIG.FPS * 30) === 0 && this.frameCount > 0) {
@@ -424,9 +475,34 @@ class WebsiteStreamer {
   }
 
   /**
+   * Проверка и отправка fallback кадра если screencast не работает
+   * Отправляет последний сохранённый кадр чтобы стрим не прерывался
+   */
+  async checkAndSendFallbackFrame() {
+    const timeSinceLastFrame = Date.now() - this.lastFrameTime;
+    const frameInterval = 1000 / CONFIG.FPS; // Интервал между кадрами в мс
+    
+    // Если кадры не приходят более 2 секунд и есть сохранённый кадр
+    if (timeSinceLastFrame > 2000 && this.lastFrame && this.ffmpeg && this.ffmpeg.stdin.writable) {
+      log.warn(`Screencast не отправляет кадры ${Math.round(timeSinceLastFrame / 1000)}с, используем fallback кадр`);
+      
+      // Отправляем несколько копий последнего кадра чтобы заполнить время
+      const framesToSend = Math.min(Math.floor(timeSinceLastFrame / frameInterval), CONFIG.FPS * 2);
+      
+      for (let i = 0; i < framesToSend; i++) {
+        this.sendFrameToFFmpeg(this.lastFrame);
+      }
+      
+      // Обновляем время, чтобы не спамить
+      this.lastFrameTime = Date.now();
+    }
+  }
+
+  /**
    * Остановка CDP Screencast
    */
   async stopScreencast() {
+    this.screencastActive = false;
     if (this.cdpSession) {
       try {
         await this.cdpSession.send('Page.stopScreencast');
@@ -436,6 +512,51 @@ class WebsiteStreamer {
       }
       this.cdpSession = null;
     }
+  }
+
+  /**
+   * Перезапуск CDP Screencast (после обновления страницы)
+   */
+  async restartScreencast() {
+    log.info('Перезапуск CDP Screencast после обновления страницы...');
+    
+    // Получаем новую CDP сессию
+    this.cdpSession = await this.page.target().createCDPSession();
+    
+    // Обработчик кадров screencast
+    this.cdpSession.on('Page.screencastFrame', async (frame) => {
+      if (!this.isRunning || !this.ffmpeg || !this.ffmpeg.stdin.writable) {
+        return;
+      }
+
+      try {
+        const frameBuffer = Buffer.from(frame.data, 'base64');
+        
+        // Сохраняем как последний кадр для fallback
+        this.lastFrame = frameBuffer;
+        this.lastFrameTime = Date.now();
+        
+        this.sendFrameToFFmpeg(frameBuffer);
+        
+        await this.cdpSession.send('Page.screencastFrameAck', {
+          sessionId: frame.sessionId,
+        });
+      } catch (error) {
+        log.error('Ошибка обработки screencast кадра:', error.message);
+      }
+    });
+
+    // Запускаем screencast
+    await this.cdpSession.send('Page.startScreencast', {
+      format: 'jpeg',
+      quality: 80,
+      maxWidth: CONFIG.WIDTH,
+      maxHeight: CONFIG.HEIGHT,
+      everyNthFrame: 1,
+    });
+
+    this.screencastActive = true;
+    log.info('CDP Screencast перезапущен');
   }
 
   /**
