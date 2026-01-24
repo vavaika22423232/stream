@@ -275,6 +275,7 @@ class WebsiteStreamer {
       // Глобальные параметры
       '-y',                           // Перезаписывать выходные файлы
       '-loglevel', 'info',            // Полное логирование
+      '-threads', '0',                // Автовыбор потоков
       
       // Вход 1: Видео из stdin (JPEG кадры)
       '-f', 'image2pipe',             // Формат входа - последовательность изображений
@@ -294,6 +295,7 @@ class WebsiteStreamer {
       '-profile:v', 'high',           // High profile для YouTube
       '-level', '4.1',                // Level 4.1 для 720p
       '-pix_fmt', 'yuv420p',          // Формат пикселей для совместимости
+      '-r', String(CONFIG.FPS),       // Выходной FPS
       '-g', String(CONFIG.FPS * 2),   // GOP размер = 2 секунды (48 кадров)
       '-keyint_min', String(CONFIG.FPS * 2), // Минимальный интервал keyframes
       '-sc_threshold', '0',           // Отключить детекцию смены сцены
@@ -302,18 +304,20 @@ class WebsiteStreamer {
       '-maxrate', CONFIG.VIDEO_BITRATE, // Максимальный битрейт (CBR)
       '-bufsize', CONFIG.VIDEO_BITRATE, // Размер буфера = битрейт (для CBR)
       
-      // Кодирование аудио с регулировкой громкости
+      // Кодирование аудио
       '-c:a', 'aac',
       '-b:a', '128k',
       '-ar', '44100',
+      '-ac', '2',                     // Стерео
       '-af', `volume=${CONFIG.MUSIC_VOLUME}`,  // Громкость музыки
       
       // Маппинг потоков
       '-map', '0:v',                  // Видео из первого входа
       '-map', '1:a',                  // Аудио из второго входа
       
-      // Выходные параметры
+      // Выходные параметры для RTMP/FLV
       '-f', 'flv',                    // FLV формат для RTMP
+      '-flvflags', 'no_duration_filesize', // Не записывать duration в header
       rtmpUrl,                        // RTMP URL с ключом
     ];
 
