@@ -30,11 +30,11 @@ const CONFIG = {
   WIDTH: parseInt(process.env.WIDTH) || 1280,
   HEIGHT: parseInt(process.env.HEIGHT) || 720,
   
-  // FPS трансляции (15 fps - стабильная скорость >= 1.0x)
-  FPS: parseInt(process.env.FPS) || 15,
+  // FPS трансляции (24 fps - минимум для YouTube)
+  FPS: parseInt(process.env.FPS) || 24,
   
   // Битрейт видео (в kbps)
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '2500k',
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '3500k',
   
   // Интервал между скриншотами (мс) = 1000 / FPS
   get FRAME_INTERVAL() {
