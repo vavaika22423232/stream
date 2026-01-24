@@ -291,11 +291,16 @@ class WebsiteStreamer {
       '-c:v', 'libx264',              // H.264 кодек
       '-preset', 'ultrafast',         // Самый быстрый пресет для realtime
       '-tune', 'zerolatency',         // Оптимизация для низкой задержки
+      '-profile:v', 'high',           // High profile для YouTube
+      '-level', '4.1',                // Level 4.1 для 720p
       '-pix_fmt', 'yuv420p',          // Формат пикселей для совместимости
-      '-g', String(CONFIG.FPS * 2),   // GOP размер = 2 секунды
+      '-g', String(CONFIG.FPS * 2),   // GOP размер = 2 секунды (48 кадров)
+      '-keyint_min', String(CONFIG.FPS * 2), // Минимальный интервал keyframes
+      '-sc_threshold', '0',           // Отключить детекцию смены сцены
       '-b:v', CONFIG.VIDEO_BITRATE,   // Битрейт видео
-      '-maxrate', CONFIG.VIDEO_BITRATE, // Максимальный битрейт
-      '-bufsize', `${parseInt(CONFIG.VIDEO_BITRATE) * 2}k`, // Размер буфера
+      '-minrate', CONFIG.VIDEO_BITRATE, // Минимальный битрейт (CBR)
+      '-maxrate', CONFIG.VIDEO_BITRATE, // Максимальный битрейт (CBR)
+      '-bufsize', CONFIG.VIDEO_BITRATE, // Размер буфера = битрейт (для CBR)
       
       // Кодирование аудио с регулировкой громкости
       '-c:a', 'aac',
