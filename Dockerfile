@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Xvfb для виртуального дисплея
     xvfb \
     x11-utils \
+    xdotool \
     # Шрифты для корректного рендеринга
     fonts-liberation \
     fonts-noto-color-emoji \

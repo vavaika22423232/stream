@@ -38,8 +38,8 @@ const CONFIG = {
   // FPS трансляции (30 fps без проблем с x11grab)
   FPS: parseInt(process.env.FPS) || 30,
   
-  // Битрейт видео
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '4500k',
+  // Битрейт видео (8000k для чёткой картинки на Pro)
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '8000k',
   
   // Таймаут перезапуска при ошибке (мс)
   RESTART_DELAY: parseInt(process.env.RESTART_DELAY) || 5000,
@@ -113,6 +113,7 @@ class WebsiteStreamer {
     
     this.browser = await puppeteer.launch({
       headless: false,  // ВАЖНО: НЕ headless! Запускаем с GUI на Xvfb
+      ignoreDefaultArgs: ['--enable-automation'],  // Убираем плашку "controlled by automation"
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -129,15 +130,19 @@ class WebsiteStreamer {
         `--window-position=0,0`,
         // Kiosk mode - убирает все элементы UI браузера
         '--kiosk',
-        // Общие настройки
-        '--no-first-run',
+        // Убираем все плашки и предупреждения
         '--disable-infobars',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-translate',
+        '--no-default-browser-check',
+        '--no-first-run',
         '--disable-session-crashed-bubble',
         '--disable-background-networking',
         '--disable-default-apps',
         '--disable-extensions',
         '--disable-sync',
-        '--disable-translate',
+        '--disable-notifications',
+        '--disable-popup-blocking',
         '--mute-audio',
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
@@ -159,6 +164,18 @@ class WebsiteStreamer {
     await this.page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
+
+    // Скрываем курсор мыши через CSS
+    await this.page.evaluateOnNewDocument(() => {
+      const style = document.createElement('style');
+      style.innerHTML = '* { cursor: none !important; }';
+      document.head.appendChild(style);
+    });
+
+    // Скрываем webdriver признаки
+    await this.page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
 
     // Обработка ошибок страницы
     this.page.on('error', (error) => {
@@ -259,25 +276,26 @@ class WebsiteStreamer {
       // === ВХОД 2: Аудио ===
       ...this.getAudioInputArgs(),
       
-      // === Кодирование видео ===
+      // === Кодирование видео (оптимизировано для Pro 2 CPU) ===
       '-c:v', 'libx264',
-      '-preset', 'veryfast',      // Хороший баланс скорость/качество
+      '-preset', 'fast',          // fast = лучшее качество (не veryfast!)
       '-tune', 'zerolatency',     // Минимальная задержка
+      '-crf', '18',               // CRF 18 = высокое качество (0-51, меньше = лучше)
       '-profile:v', 'high',       // High profile для YouTube
-      '-level', '4.1',            // Level для 1080p30
+      '-level', '4.2',            // Level 4.2 для 1080p30 с высоким битрейтом
       '-pix_fmt', 'yuv420p',
       '-r', String(CONFIG.FPS),
       '-g', String(CONFIG.FPS * 2),        // Keyframe каждые 2 сек
       '-keyint_min', String(CONFIG.FPS * 2),
       '-sc_threshold', '0',
-      '-b:v', CONFIG.VIDEO_BITRATE,
+      '-b:v', CONFIG.VIDEO_BITRATE,        // Битрейт 8 Mbps
       '-maxrate', CONFIG.VIDEO_BITRATE,
-      '-bufsize', '9000k',
+      '-bufsize', '16000k',                // Буфер = 2x битрейт
       
-      // === Кодирование аудио ===
+      // === Кодирование аудио (высокое качество) ===
       '-c:a', 'aac',
-      '-b:a', '128k',
-      '-ar', '44100',
+      '-b:a', '192k',             // 192k для лучшего звука
+      '-ar', '48000',             // 48kHz - стандарт для видео
       '-ac', '2',
       '-af', `volume=${CONFIG.MUSIC_VOLUME}`,
       

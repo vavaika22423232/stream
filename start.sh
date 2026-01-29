@@ -1,6 +1,6 @@
 #!/bin/bash
 # ===========================================
-# Скрипт запуска с Xvfb
+# Скрипт запуска с Xvfb (без курсора)
 # ===========================================
 
 set -e
@@ -11,7 +11,7 @@ HEIGHT=${HEIGHT:-1080}
 
 echo "[$(date -Iseconds)] Запуск Xvfb на дисплее :99 с разрешением ${WIDTH}x${HEIGHT}..."
 
-# Запускаем Xvfb в фоне
+# Запускаем Xvfb в фоне (без курсора!)
 Xvfb :99 -screen 0 ${WIDTH}x${HEIGHT}x24 -ac +extension GLX +render -noreset &
 XVFB_PID=$!
 
@@ -28,6 +28,12 @@ echo "[$(date -Iseconds)] Xvfb запущен (PID: $XVFB_PID)"
 
 # Устанавливаем DISPLAY
 export DISPLAY=:99
+
+# Скрываем курсор мыши (перемещаем за экран)
+# unclutter не нужен - курсор будет скрыт через xdotool
+if command -v xdotool &> /dev/null; then
+    xdotool mousemove 99999 99999 2>/dev/null || true
+fi
 
 # Запускаем Node.js приложение
 echo "[$(date -Iseconds)] Запуск стримера..."
