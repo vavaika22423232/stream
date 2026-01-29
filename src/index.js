@@ -26,15 +26,15 @@ const CONFIG = {
   YOUTUBE_RTMP_URL: process.env.YOUTUBE_RTMP_URL || 'rtmp://a.rtmp.youtube.com/live2',
   STREAM_KEY: process.env.STREAM_KEY,
   
-  // Разрешение видео (720p для стабильной скорости)
-  WIDTH: parseInt(process.env.WIDTH) || 1280,
-  HEIGHT: parseInt(process.env.HEIGHT) || 720,
+  // Разрешение видео (480p для максимальной скорости на слабом сервере)
+  WIDTH: parseInt(process.env.WIDTH) || 854,
+  HEIGHT: parseInt(process.env.HEIGHT) || 480,
   
-  // FPS трансляции (24 fps - минимум для YouTube)
-  FPS: parseInt(process.env.FPS) || 24,
+  // FPS трансляции (15 fps - достижимо на Render)
+  FPS: parseInt(process.env.FPS) || 15,
   
-  // Битрейт видео (в kbps)
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '3500k',
+  // Битрейт видео (в kbps) - уменьшен для 480p
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '1500k',
   
   // Интервал между скриншотами (мс) = 1000 / FPS
   get FRAME_INTERVAL() {
@@ -308,21 +308,20 @@ class WebsiteStreamer {
       // Вход 2: Аудио (музыка или тишина)
       ...this.getAudioInputArgs(),
       
-      // Кодирование видео
+      // Кодирование видео - максимально оптимизировано для слабого сервера
       '-c:v', 'libx264',              // H.264 кодек
-      '-preset', 'ultrafast',         // Самый быстрый пресет для realtime
+      '-preset', 'ultrafast',         // Самый быстрый пресет
       '-tune', 'zerolatency',         // Оптимизация для низкой задержки
-      '-profile:v', 'high',           // High profile для YouTube
-      '-level', '4.1',                // Level 4.1 для 720p
-      '-pix_fmt', 'yuv420p',          // Формат пикселей для совместимости
+      '-profile:v', 'baseline',       // Baseline profile - быстрее кодирование
+      '-level', '3.1',                // Level 3.1 для 480p
+      '-pix_fmt', 'yuv420p',          // Формат пикселей
       '-r', String(CONFIG.FPS),       // Выходной FPS
-      '-g', String(CONFIG.FPS * 2),   // GOP размер = 2 секунды (48 кадров)
+      '-g', String(CONFIG.FPS * 2),   // GOP размер = 2 секунды
       '-keyint_min', String(CONFIG.FPS * 2), // Минимальный интервал keyframes
       '-sc_threshold', '0',           // Отключить детекцию смены сцены
       '-b:v', CONFIG.VIDEO_BITRATE,   // Битрейт видео
-      '-minrate', CONFIG.VIDEO_BITRATE, // Минимальный битрейт (CBR)
-      '-maxrate', CONFIG.VIDEO_BITRATE, // Максимальный битрейт (CBR)
-      '-bufsize', CONFIG.VIDEO_BITRATE, // Размер буфера = битрейт (для CBR)
+      '-maxrate', CONFIG.VIDEO_BITRATE, // Максимальный битрейт
+      '-bufsize', '3000k',            // Размер буфера
       
       // Кодирование аудио
       '-c:a', 'aac',
@@ -472,10 +471,10 @@ class WebsiteStreamer {
     // Запускаем screencast
     await this.cdpSession.send('Page.startScreencast', {
       format: 'jpeg',
-      quality: 80,
+      quality: 50,                  // Низкое качество для скорости
       maxWidth: CONFIG.WIDTH,
       maxHeight: CONFIG.HEIGHT,
-      everyNthFrame: 1, // Каждый кадр
+      everyNthFrame: 1,             // Каждый кадр
     });
 
     log.info('CDP Screencast запущен');
@@ -578,7 +577,7 @@ class WebsiteStreamer {
     // Запускаем screencast
     await this.cdpSession.send('Page.startScreencast', {
       format: 'jpeg',
-      quality: 80,
+      quality: 50,                  // Низкое качество для скорости
       maxWidth: CONFIG.WIDTH,
       maxHeight: CONFIG.HEIGHT,
       everyNthFrame: 1,
