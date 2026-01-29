@@ -124,20 +124,25 @@ class WebsiteStreamer {
         // WebGL и GPU для отображения карт
         '--enable-webgl',
         '--enable-webgl2',
-        '--use-gl=swiftshader',         // Software WebGL рендеринг
+        '--use-gl=angle',               // ANGLE для WebGL (лучше чем swiftshader)
+        '--use-angle=swiftshader',      // SwiftShader backend для ANGLE
         '--enable-accelerated-2d-canvas',
         '--ignore-gpu-blocklist',       // Игнорировать блокировку GPU
         '--enable-gpu-rasterization',
+        '--disable-software-rasterizer',
+        '--enable-features=VaapiVideoDecoder',
         // Общие настройки
         '--no-first-run',
         '--no-zygote',
-        '--single-process', // Важно для Docker/Render
         '--disable-background-networking',
         '--disable-default-apps',
         '--disable-extensions',
         '--disable-sync',
         '--disable-translate',
         '--mute-audio',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
         `--window-size=${CONFIG.WIDTH},${CONFIG.HEIGHT}`,
       ],
       defaultViewport: {
@@ -180,11 +185,20 @@ class WebsiteStreamer {
     try {
       await this.page.goto(CONFIG.TARGET_URL, {
         waitUntil: 'networkidle2',
-        timeout: 60000,
+        timeout: 90000,
       });
       
-      // Ждём полную загрузку
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Ждём полную загрузку карты (WebGL инициализация)
+      log.info('Ожидание загрузки карты (10 сек)...');
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      
+      // Проверяем WebGL
+      const webglStatus = await this.page.evaluate(() => {
+        const canvas = document.createElement('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        return gl ? 'WebGL работает' : 'WebGL НЕ работает';
+      });
+      log.info(`Статус WebGL: ${webglStatus}`);
       
       log.info('Страница загружена');
       this.lastRefreshTime = Date.now();
