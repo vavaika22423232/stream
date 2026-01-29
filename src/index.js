@@ -26,15 +26,15 @@ const CONFIG = {
   YOUTUBE_RTMP_URL: process.env.YOUTUBE_RTMP_URL || 'rtmp://a.rtmp.youtube.com/live2',
   STREAM_KEY: process.env.STREAM_KEY,
   
-  // Разрешение видео (360p для realtime на слабом сервере Render Starter)
-  WIDTH: parseInt(process.env.WIDTH) || 640,
-  HEIGHT: parseInt(process.env.HEIGHT) || 360,
+  // Разрешение видео (1080p для Render Pro с 2 CPU)
+  WIDTH: parseInt(process.env.WIDTH) || 1920,
+  HEIGHT: parseInt(process.env.HEIGHT) || 1080,
   
-  // FPS трансляции (10 fps - минимум для плавности)
-  FPS: parseInt(process.env.FPS) || 10,
+  // FPS трансляции (30 fps - стандарт для YouTube)
+  FPS: parseInt(process.env.FPS) || 30,
   
-  // Битрейт видео (в kbps) - уменьшен для 360p
-  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '800k',
+  // Битрейт видео (в kbps) - 4500k для 1080p30
+  VIDEO_BITRATE: process.env.VIDEO_BITRATE || '4500k',
   
   // Интервал между скриншотами (мс) = 1000 / FPS
   get FRAME_INTERVAL() {
@@ -290,12 +290,12 @@ class WebsiteStreamer {
     
     log.info(`RTMP URL: ${CONFIG.YOUTUBE_RTMP_URL}/****`);
     
-    // FFmpeg аргументы для стриминга на YouTube
+    // FFmpeg аргументы для стриминга на YouTube (оптимизировано для 2 CPU)
     const ffmpegArgs = [
       // Глобальные параметры
       '-y',                           // Перезаписывать выходные файлы
       '-loglevel', 'info',            // Полное логирование
-      '-threads', '0',                // Автовыбор потоков
+      '-threads', '4',                // 4 потока для 2 CPU
       
       // Вход 1: Видео из stdin (JPEG кадры)
       '-f', 'image2pipe',             // Формат входа - последовательность изображений
@@ -308,12 +308,12 @@ class WebsiteStreamer {
       // Вход 2: Аудио (музыка или тишина)
       ...this.getAudioInputArgs(),
       
-      // Кодирование видео - максимально оптимизировано для слабого сервера
+      // Кодирование видео - оптимизировано для Render Pro (2 CPU)
       '-c:v', 'libx264',              // H.264 кодек
-      '-preset', 'ultrafast',         // Самый быстрый пресет
+      '-preset', 'veryfast',          // Быстрый пресет с хорошим качеством
       '-tune', 'zerolatency',         // Оптимизация для низкой задержки
-      '-profile:v', 'baseline',       // Baseline profile - быстрее кодирование
-      '-level', '3.1',                // Level 3.1 для 480p
+      '-profile:v', 'main',           // Main profile для YouTube
+      '-level', '4.1',                // Level 4.1 для 1080p
       '-pix_fmt', 'yuv420p',          // Формат пикселей
       '-r', String(CONFIG.FPS),       // Выходной FPS
       '-g', String(CONFIG.FPS * 2),   // GOP размер = 2 секунды
@@ -321,7 +321,7 @@ class WebsiteStreamer {
       '-sc_threshold', '0',           // Отключить детекцию смены сцены
       '-b:v', CONFIG.VIDEO_BITRATE,   // Битрейт видео
       '-maxrate', CONFIG.VIDEO_BITRATE, // Максимальный битрейт
-      '-bufsize', '3000k',            // Размер буфера
+      '-bufsize', '9000k',            // Размер буфера = 2x битрейт
       
       // Кодирование аудио
       '-c:a', 'aac',
@@ -471,7 +471,7 @@ class WebsiteStreamer {
     // Запускаем screencast
     await this.cdpSession.send('Page.startScreencast', {
       format: 'jpeg',
-      quality: 50,                  // Низкое качество для скорости
+      quality: 85,                  // Высокое качество для Pro плана
       maxWidth: CONFIG.WIDTH,
       maxHeight: CONFIG.HEIGHT,
       everyNthFrame: 1,             // Каждый кадр
@@ -577,7 +577,7 @@ class WebsiteStreamer {
     // Запускаем screencast
     await this.cdpSession.send('Page.startScreencast', {
       format: 'jpeg',
-      quality: 50,                  // Низкое качество для скорости
+      quality: 85,                  // Высокое качество для Pro плана
       maxWidth: CONFIG.WIDTH,
       maxHeight: CONFIG.HEIGHT,
       everyNthFrame: 1,
