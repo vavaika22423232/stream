@@ -121,8 +121,14 @@ class WebsiteStreamer {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
+        // WebGL и GPU для отображения карт
+        '--enable-webgl',
+        '--enable-webgl2',
+        '--use-gl=swiftshader',         // Software WebGL рендеринг
+        '--enable-accelerated-2d-canvas',
+        '--ignore-gpu-blocklist',       // Игнорировать блокировку GPU
+        '--enable-gpu-rasterization',
+        // Общие настройки
         '--no-first-run',
         '--no-zygote',
         '--single-process', // Важно для Docker/Render
