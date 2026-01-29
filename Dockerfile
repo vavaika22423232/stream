@@ -2,7 +2,7 @@
 # YouTube Website Streamer - Dockerfile
 # ===========================================
 # Образ для 24/7 трансляции сайта на YouTube Live
-# через headless браузер + FFmpeg
+# через Xvfb + x11grab (быстрый захват экрана)
 # ===========================================
 
 # Используем официальный Node.js образ с Debian
@@ -16,14 +16,17 @@ LABEL description="24/7 website streaming to YouTube Live"
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     NODE_ENV=production \
-    # Отключаем sandbox для Docker
-    CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
+    # Виртуальный дисплей
+    DISPLAY=:99
 
 # Установка зависимостей системы
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Chromium и зависимости
     chromium \
     chromium-sandbox \
+    # Xvfb для виртуального дисплея
+    xvfb \
+    x11-utils \
     # Шрифты для корректного рендеринга
     fonts-liberation \
     fonts-noto-color-emoji \
@@ -63,6 +66,10 @@ RUN mkdir -p ./music
 # Копируем музыку если есть в репозитории
 COPY --chown=streamer:streamer music/ ./music/
 
+# Создаём скрипт запуска с Xvfb
+COPY --chown=streamer:streamer start.sh ./
+RUN chmod +x start.sh
+
 # Переключаемся на непривилегированного пользователя
 USER streamer
 
@@ -73,5 +80,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # Используем dumb-init для корректной обработки сигналов
 ENTRYPOINT ["dumb-init", "--"]
 
-# Запускаем приложение
-CMD ["node", "src/index.js"]
+# Запускаем через скрипт с Xvfb
+CMD ["./start.sh"]

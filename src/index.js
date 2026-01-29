@@ -1,14 +1,19 @@
 /**
- * YouTube Website Streamer
+ * YouTube Website Streamer v2.0
  * 
  * 24/7 автоматическая трансляция сайта на YouTube Live
- * через headless браузер (Puppeteer) + FFmpeg
+ * через Xvfb + x11grab (БЫСТРЫЙ захват экрана)
  * 
  * Архитектура:
- * 1. Puppeteer открывает сайт в headless режиме (1920x1080)
- * 2. Скриншоты браузера передаются в FFmpeg через pipe
- * 3. FFmpeg кодирует видеопоток и отправляет на YouTube через RTMP
- * 4. Автоматический перезапуск при любых сбоях
+ * 1. Xvfb создаёт виртуальный дисплей (например :99)
+ * 2. Chromium запускается в ОБЫЧНОМ режиме (не headless!) на этом дисплее
+ * 3. FFmpeg захватывает экран напрямую через x11grab - это очень быстро!
+ * 4. Видеопоток кодируется в H.264 и отправляется на YouTube через RTMP
+ * 
+ * Преимущества x11grab vs CDP Screencast:
+ * - x11grab работает на уровне X-сервера, минуя JavaScript
+ * - Стабильные 30+ fps даже с тяжёлыми WebGL приложениями
+ * - Меньше нагрузки на браузер
  */
 
 const puppeteer = require('puppeteer');
@@ -26,39 +31,34 @@ const CONFIG = {
   YOUTUBE_RTMP_URL: process.env.YOUTUBE_RTMP_URL || 'rtmp://a.rtmp.youtube.com/live2',
   STREAM_KEY: process.env.STREAM_KEY,
   
-  // Разрешение видео (1080p для Render Pro с 2 CPU)
+  // Разрешение видео (1080p - x11grab легко справится!)
   WIDTH: parseInt(process.env.WIDTH) || 1920,
   HEIGHT: parseInt(process.env.HEIGHT) || 1080,
   
-  // FPS трансляции (30 fps - стандарт для YouTube)
+  // FPS трансляции (30 fps без проблем с x11grab)
   FPS: parseInt(process.env.FPS) || 30,
   
-  // Битрейт видео (в kbps) - 4500k для 1080p30
+  // Битрейт видео
   VIDEO_BITRATE: process.env.VIDEO_BITRATE || '4500k',
-  
-  // Интервал между скриншотами (мс) = 1000 / FPS
-  get FRAME_INTERVAL() {
-    return Math.floor(1000 / this.FPS);
-  },
   
   // Таймаут перезапуска при ошибке (мс)
   RESTART_DELAY: parseInt(process.env.RESTART_DELAY) || 5000,
   
-  // Интервал обновления страницы для предотвращения утечек памяти (мс)
+  // Интервал обновления страницы (мс)
   PAGE_REFRESH_INTERVAL: parseInt(process.env.PAGE_REFRESH_INTERVAL) || 3600000, // 1 час
   
-  // Путь к фоновой музыке (mp3)
+  // Путь к фоновой музыке
   MUSIC_PATH: process.env.MUSIC_PATH || path.join(__dirname, '..', 'music', 'background.mp3'),
   
   // Громкость музыки (0.0 - 1.0)
   MUSIC_VOLUME: parseFloat(process.env.MUSIC_VOLUME) || 0.15,
+  
+  // X11 дисплей (задаётся Xvfb)
+  DISPLAY: process.env.DISPLAY || ':99',
 };
 
 // ==================== ЛОГИРОВАНИЕ ====================
 
-/**
- * Форматированное логирование с таймстампом
- */
 const log = {
   info: (message, ...args) => {
     console.log(`[${new Date().toISOString()}] [INFO] ${message}`, ...args);
@@ -78,19 +78,20 @@ const log = {
 
 // ==================== ВАЛИДАЦИЯ ====================
 
-/**
- * Проверка обязательных переменных окружения
- */
 function validateConfig() {
   if (!CONFIG.STREAM_KEY) {
     throw new Error('STREAM_KEY не установлен! Добавьте переменную окружения STREAM_KEY');
   }
   
-  log.info('Конфигурация валидна');
-  log.info(`URL: ${CONFIG.TARGET_URL}`);
-  log.info(`Разрешение: ${CONFIG.WIDTH}x${CONFIG.HEIGHT}`);
-  log.info(`FPS: ${CONFIG.FPS}`);
-  log.info(`Битрейт: ${CONFIG.VIDEO_BITRATE}`);
+  log.info('='.repeat(50));
+  log.info('Конфигурация:');
+  log.info(`  URL: ${CONFIG.TARGET_URL}`);
+  log.info(`  Разрешение: ${CONFIG.WIDTH}x${CONFIG.HEIGHT}`);
+  log.info(`  FPS: ${CONFIG.FPS}`);
+  log.info(`  Битрейт: ${CONFIG.VIDEO_BITRATE}`);
+  log.info(`  Дисплей: ${CONFIG.DISPLAY}`);
+  log.info(`  Режим захвата: x11grab (быстрый)`);
+  log.info('='.repeat(50));
 }
 
 // ==================== КЛАСС СТРИМЕРА ====================
@@ -99,41 +100,39 @@ class WebsiteStreamer {
   constructor() {
     this.browser = null;
     this.page = null;
-    this.cdpSession = null;
     this.ffmpeg = null;
     this.isRunning = false;
-    this.frameCount = 0;
     this.lastRefreshTime = Date.now();
-    this.lastFrame = null; // Буфер последнего кадра для fallback
-    this.screencastActive = false; // Флаг активности screencast
-    this.lastFrameTime = 0; // Время последнего полученного кадра
   }
 
   /**
-   * Запуск headless браузера
+   * Запуск браузера в ОБЫЧНОМ режиме (не headless!) на виртуальном дисплее Xvfb
    */
   async startBrowser() {
-    log.info('Запуск браузера...');
+    log.info('Запуск браузера на виртуальном дисплее...');
     
     this.browser = await puppeteer.launch({
-      headless: 'new', // Новый headless режим Puppeteer
+      headless: false,  // ВАЖНО: НЕ headless! Запускаем с GUI на Xvfb
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        // WebGL и GPU для отображения карт
+        // WebGL для карт
         '--enable-webgl',
         '--enable-webgl2',
-        '--use-gl=angle',               // ANGLE для WebGL (лучше чем swiftshader)
-        '--use-angle=swiftshader',      // SwiftShader backend для ANGLE
-        '--enable-accelerated-2d-canvas',
-        '--ignore-gpu-blocklist',       // Игнорировать блокировку GPU
+        '--ignore-gpu-blocklist',
         '--enable-gpu-rasterization',
-        '--disable-software-rasterizer',
-        '--enable-features=VaapiVideoDecoder',
+        // Полноэкранный режим
+        '--start-fullscreen',
+        '--start-maximized',
+        `--window-size=${CONFIG.WIDTH},${CONFIG.HEIGHT}`,
+        `--window-position=0,0`,
+        // Kiosk mode - убирает все элементы UI браузера
+        '--kiosk',
         // Общие настройки
         '--no-first-run',
-        '--no-zygote',
+        '--disable-infobars',
+        '--disable-session-crashed-bubble',
         '--disable-background-networking',
         '--disable-default-apps',
         '--disable-extensions',
@@ -143,26 +142,23 @@ class WebsiteStreamer {
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
-        `--window-size=${CONFIG.WIDTH},${CONFIG.HEIGHT}`,
+        '--autoplay-policy=no-user-gesture-required',
       ],
-      defaultViewport: {
-        width: CONFIG.WIDTH,
-        height: CONFIG.HEIGHT,
+      defaultViewport: null,  // Используем размер окна
+      env: {
+        ...process.env,
+        DISPLAY: CONFIG.DISPLAY,
       },
     });
 
-    this.page = await this.browser.newPage();
+    // Получаем первую страницу
+    const pages = await this.browser.pages();
+    this.page = pages[0] || await this.browser.newPage();
     
     // Устанавливаем User-Agent
     await this.page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
-
-    // Блокируем диалоги
-    this.page.on('dialog', async (dialog) => {
-      log.debug(`Диалог заблокирован: ${dialog.message()}`);
-      await dialog.dismiss();
-    });
 
     // Обработка ошибок страницы
     this.page.on('error', (error) => {
@@ -171,6 +167,11 @@ class WebsiteStreamer {
 
     this.page.on('pageerror', (error) => {
       log.debug('JS ошибка на странице:', error.message);
+    });
+
+    // Блокируем диалоги
+    this.page.on('dialog', async (dialog) => {
+      await dialog.dismiss();
     });
 
     log.info('Браузер запущен');
@@ -182,94 +183,50 @@ class WebsiteStreamer {
   async loadPage() {
     log.info(`Загрузка страницы: ${CONFIG.TARGET_URL}`);
     
-    try {
-      await this.page.goto(CONFIG.TARGET_URL, {
-        waitUntil: 'networkidle2',
-        timeout: 90000,
-      });
-      
-      // Ждём полную загрузку карты (WebGL инициализация)
-      log.info('Ожидание загрузки карты (10 сек)...');
-      await new Promise(resolve => setTimeout(resolve, 10000));
-      
-      // Проверяем WebGL
-      const webglStatus = await this.page.evaluate(() => {
-        const canvas = document.createElement('canvas');
-        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-        return gl ? 'WebGL работает' : 'WebGL НЕ работает';
-      });
-      log.info(`Статус WebGL: ${webglStatus}`);
-      
-      log.info('Страница загружена');
-      this.lastRefreshTime = Date.now();
-    } catch (error) {
-      log.error('Ошибка загрузки страницы:', error.message);
-      throw error;
-    }
-  }
+    await this.page.goto(CONFIG.TARGET_URL, {
+      waitUntil: 'networkidle2',
+      timeout: 60000,
+    });
 
-  /**
-   * Периодическое обновление страницы для предотвращения утечек памяти
-   * При обновлении нужно перезапустить CDP Screencast
-   * ВАЖНО: Стрим продолжает работать даже если страница недоступна
-   */
-  async refreshPageIfNeeded() {
-    const timeSinceRefresh = Date.now() - this.lastRefreshTime;
+    // Устанавливаем viewport на полный размер
+    await this.page.setViewport({
+      width: CONFIG.WIDTH,
+      height: CONFIG.HEIGHT,
+    });
     
-    if (timeSinceRefresh >= CONFIG.PAGE_REFRESH_INTERVAL) {
-      log.info('Обновление страницы для предотвращения утечек памяти...');
-      
-      try {
-        // Останавливаем текущий screencast
-        await this.stopScreencast();
-        
-        // Пытаемся перезагрузить страницу
-        try {
-          await this.loadPage();
-        } catch (loadError) {
-          log.error('Не удалось загрузить страницу, пробуем снова через 5 секунд:', loadError.message);
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          
-          try {
-            await this.loadPage();
-          } catch (retryError) {
-            log.error('Повторная загрузка не удалась, используем fallback кадр:', retryError.message);
-            // Не бросаем ошибку - продолжаем с fallback кадром
-          }
-        }
-        
-        // Пытаемся перезапустить screencast
-        try {
-          await this.restartScreencast();
-        } catch (screencastError) {
-          log.error('Не удалось перезапустить screencast:', screencastError.message);
-          // Стрим продолжит работать на fallback кадрах
-        }
-      } catch (error) {
-        log.error('Ошибка при обновлении страницы:', error.message);
-        // Не прерываем стрим!
-      }
-      
-      // Обновляем время в любом случае чтобы не спамить
-      this.lastRefreshTime = Date.now();
-    }
+    // Ждём загрузки WebGL карты
+    log.info('Ожидание загрузки WebGL карты (10 сек)...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    
+    // Проверяем WebGL
+    const webglStatus = await this.page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (!gl) return 'WebGL НЕ работает';
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      const renderer = debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'unknown';
+      return `WebGL работает (${renderer})`;
+    });
+    log.info(`Статус: ${webglStatus}`);
+    
+    log.info('Страница загружена и готова');
+    this.lastRefreshTime = Date.now();
   }
 
   /**
    * Получить аргументы FFmpeg для аудио входа
-   * Если есть музыкальный файл - используем его, иначе тишина
    */
   getAudioInputArgs() {
     const musicExists = fs.existsSync(CONFIG.MUSIC_PATH);
     
     if (musicExists) {
-      log.info(`Используем фоновую музыку: ${CONFIG.MUSIC_PATH}`);
+      log.info(`Фоновая музыка: ${CONFIG.MUSIC_PATH}`);
       return [
-        '-stream_loop', '-1',           // Бесконечный цикл музыки
-        '-i', CONFIG.MUSIC_PATH,        // Путь к mp3 файлу
+        '-stream_loop', '-1',
+        '-i', CONFIG.MUSIC_PATH,
       ];
     } else {
-      log.info('Музыкальный файл не найден, используем тишину');
+      log.info('Музыка не найдена, используем тишину');
       return [
         '-f', 'lavfi',
         '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
@@ -278,340 +235,152 @@ class WebsiteStreamer {
   }
 
   /**
-   * Запуск FFmpeg процесса
-   * 
-   * FFmpeg принимает последовательность JPEG изображений через stdin
-   * и кодирует их в H.264 видеопоток для YouTube
+   * Запуск FFmpeg с x11grab - захват экрана напрямую с X-сервера
    */
   startFFmpeg() {
-    log.info('Запуск FFmpeg...');
+    log.info('Запуск FFmpeg с x11grab...');
     
     const rtmpUrl = `${CONFIG.YOUTUBE_RTMP_URL}/${CONFIG.STREAM_KEY}`;
     
-    log.info(`RTMP URL: ${CONFIG.YOUTUBE_RTMP_URL}/****`);
+    log.info(`RTMP: ${CONFIG.YOUTUBE_RTMP_URL}/****`);
     
-    // FFmpeg аргументы для стриминга на YouTube (оптимизировано для 2 CPU)
     const ffmpegArgs = [
       // Глобальные параметры
-      '-y',                           // Перезаписывать выходные файлы
-      '-loglevel', 'info',            // Полное логирование
-      '-threads', '4',                // 4 потока для 2 CPU
+      '-y',
+      '-loglevel', 'info',
+      '-threads', '4',
       
-      // Вход 1: Видео из stdin (JPEG кадры)
-      '-f', 'image2pipe',             // Формат входа - последовательность изображений
-      '-vcodec', 'mjpeg',             // Входной кодек - MJPEG
-      '-framerate', String(CONFIG.FPS), // Входной FPS
-      '-probesize', '32',             // Минимальный размер для анализа
-      '-analyzeduration', '0',        // Не анализировать длительность
-      '-i', 'pipe:0',                 // Читать из stdin
+      // === ВХОД 1: x11grab - захват экрана ===
+      '-f', 'x11grab',
+      '-framerate', String(CONFIG.FPS),
+      '-video_size', `${CONFIG.WIDTH}x${CONFIG.HEIGHT}`,
+      '-i', `${CONFIG.DISPLAY}+0,0`,  // Дисплей + смещение x,y
       
-      // Вход 2: Аудио (музыка или тишина)
+      // === ВХОД 2: Аудио ===
       ...this.getAudioInputArgs(),
       
-      // Кодирование видео - оптимизировано для Render Pro (2 CPU)
-      '-c:v', 'libx264',              // H.264 кодек
-      '-preset', 'veryfast',          // Быстрый пресет с хорошим качеством
-      '-tune', 'zerolatency',         // Оптимизация для низкой задержки
-      '-profile:v', 'main',           // Main profile для YouTube
-      '-level', '4.1',                // Level 4.1 для 1080p
-      '-pix_fmt', 'yuv420p',          // Формат пикселей
-      '-r', String(CONFIG.FPS),       // Выходной FPS
-      '-g', String(CONFIG.FPS * 2),   // GOP размер = 2 секунды
-      '-keyint_min', String(CONFIG.FPS * 2), // Минимальный интервал keyframes
-      '-sc_threshold', '0',           // Отключить детекцию смены сцены
-      '-b:v', CONFIG.VIDEO_BITRATE,   // Битрейт видео
-      '-maxrate', CONFIG.VIDEO_BITRATE, // Максимальный битрейт
-      '-bufsize', '9000k',            // Размер буфера = 2x битрейт
+      // === Кодирование видео ===
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',      // Хороший баланс скорость/качество
+      '-tune', 'zerolatency',     // Минимальная задержка
+      '-profile:v', 'high',       // High profile для YouTube
+      '-level', '4.1',            // Level для 1080p30
+      '-pix_fmt', 'yuv420p',
+      '-r', String(CONFIG.FPS),
+      '-g', String(CONFIG.FPS * 2),        // Keyframe каждые 2 сек
+      '-keyint_min', String(CONFIG.FPS * 2),
+      '-sc_threshold', '0',
+      '-b:v', CONFIG.VIDEO_BITRATE,
+      '-maxrate', CONFIG.VIDEO_BITRATE,
+      '-bufsize', '9000k',
       
-      // Кодирование аудио
+      // === Кодирование аудио ===
       '-c:a', 'aac',
       '-b:a', '128k',
       '-ar', '44100',
-      '-ac', '2',                     // Стерео
-      '-af', `volume=${CONFIG.MUSIC_VOLUME}`,  // Громкость музыки
+      '-ac', '2',
+      '-af', `volume=${CONFIG.MUSIC_VOLUME}`,
       
-      // Маппинг потоков
-      '-map', '0:v',                  // Видео из первого входа
-      '-map', '1:a',                  // Аудио из второго входа
+      // === Маппинг ===
+      '-map', '0:v',
+      '-map', '1:a',
       
-      // Выходные параметры для RTMP/FLV
-      '-f', 'flv',                    // FLV формат для RTMP
-      '-flvflags', 'no_duration_filesize', // Не записывать duration в header
-      rtmpUrl,                        // RTMP URL с ключом
+      // === Выход ===
+      '-f', 'flv',
+      '-flvflags', 'no_duration_filesize',
+      rtmpUrl,
     ];
 
-    log.debug('FFmpeg команда:', 'ffmpeg', ffmpegArgs.join(' '));
+    log.debug('FFmpeg команда:', 'ffmpeg ' + ffmpegArgs.join(' '));
 
-    this.ffmpeg = spawn('ffmpeg', ffmpegArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    this.ffmpeg = spawn('ffmpeg', ffmpegArgs);
+    this.isRunning = true;
 
-    // Обработка stdout FFmpeg
-    this.ffmpeg.stdout.on('data', (data) => {
-      log.debug('FFmpeg stdout:', data.toString());
-    });
-
-    // Обработка stderr FFmpeg (основной вывод)
+    // Обработка вывода FFmpeg
     this.ffmpeg.stderr.on('data', (data) => {
-      const message = data.toString().trim();
-      // Показываем ВСЕ сообщения FFmpeg для отладки
-      if (message) {
-        log.info('FFmpeg:', message);
+      const output = data.toString().trim();
+      // Показываем строки с прогрессом
+      if (output.includes('frame=') || output.includes('fps=')) {
+        const lines = output.split('\n');
+        log.info('FFmpeg:', lines[lines.length - 1]);
+      } else if (output.includes('error') || output.includes('Error')) {
+        log.error('FFmpeg:', output);
+      } else if (output.includes('Output')) {
+        log.info('FFmpeg:', output);
       }
     });
 
-    // Обработка завершения FFmpeg
     this.ffmpeg.on('close', (code) => {
       log.warn(`FFmpeg завершился с кодом: ${code}`);
-      this.ffmpeg = null;
-      
       if (this.isRunning) {
-        log.info('Перезапуск FFmpeg...');
-        setTimeout(() => this.startFFmpeg(), 1000);
+        log.info('Перезапуск FFmpeg через 2 сек...');
+        setTimeout(() => this.startFFmpeg(), 2000);
       }
     });
 
-    // Обработка ошибок FFmpeg
     this.ffmpeg.on('error', (error) => {
       log.error('Ошибка FFmpeg:', error.message);
     });
 
-    log.info('FFmpeg запущен');
+    log.info('FFmpeg запущен - стрим активен!');
   }
 
   /**
-   * Захват и отправка кадра (используется только как fallback)
+   * Периодическое обновление страницы
    */
-  async captureAndSendFrame() {
-    if (!this.page || !this.ffmpeg || !this.ffmpeg.stdin.writable) {
-      return false;
-    }
-
-    try {
-      const screenshot = await this.page.screenshot({
-        type: 'jpeg',
-        quality: 80,
-        fullPage: false,
-      });
-
-      return this.sendFrameToFFmpeg(screenshot);
-    } catch (error) {
-      log.error('Ошибка захвата кадра:', error.message);
-      return false;
-    }
-  }
-
-  /**
-   * Отправка кадра в FFmpeg
-   */
-  sendFrameToFFmpeg(frameData) {
-    if (!this.ffmpeg || !this.ffmpeg.stdin.writable) {
-      return false;
-    }
-
-    try {
-      const canWrite = this.ffmpeg.stdin.write(frameData);
-      this.frameCount++;
-      
-      // Логируем каждые 30 кадров
-      if (this.frameCount % 30 === 0) {
-        log.info(`Отправлено кадров: ${this.frameCount}`);
-      }
-
-      if (!canWrite) {
-        // Буфер переполнен - пропускаем кадры до drain
-        return new Promise((resolve) => {
-          this.ffmpeg.stdin.once('drain', () => resolve(true));
-        });
-      }
-      
-      return true;
-    } catch (error) {
-      log.error('Ошибка записи в FFmpeg:', error.message);
-      return false;
-    }
-  }
-
-  /**
-   * Запуск CDP Screencast - нативный захват экрана браузера
-   * Работает в 3-5 раз быстрее чем page.screenshot()
-   */
-  async startScreencast() {
-    log.info('Запуск CDP Screencast для быстрого захвата...');
+  async refreshPageIfNeeded() {
+    const elapsed = Date.now() - this.lastRefreshTime;
     
-    // Получаем CDP сессию
-    this.cdpSession = await this.page.target().createCDPSession();
-    
-    // Обработчик кадров screencast
-    this.cdpSession.on('Page.screencastFrame', async (frame) => {
-      if (!this.isRunning || !this.ffmpeg || !this.ffmpeg.stdin.writable) {
-        return;
-      }
-
+    if (elapsed >= CONFIG.PAGE_REFRESH_INTERVAL) {
+      log.info('Обновление страницы (против утечек памяти)...');
+      
       try {
-        // Декодируем base64 кадр в Buffer
-        const frameBuffer = Buffer.from(frame.data, 'base64');
-        
-        // Сохраняем как последний кадр для fallback
-        this.lastFrame = frameBuffer;
-        this.lastFrameTime = Date.now();
-        
-        // Отправляем в FFmpeg
-        this.sendFrameToFFmpeg(frameBuffer);
-        
-        // Подтверждаем получение кадра (важно для продолжения потока)
-        await this.cdpSession.send('Page.screencastFrameAck', {
-          sessionId: frame.sessionId,
-        });
+        await this.page.reload({ waitUntil: 'networkidle2', timeout: 60000 });
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        log.info('Страница обновлена');
       } catch (error) {
-        log.error('Ошибка обработки screencast кадра:', error.message);
+        log.error('Ошибка при обновлении:', error.message);
       }
-    });
+      
+      this.lastRefreshTime = Date.now();
+    }
+  }
 
-    // Запускаем screencast
-    await this.cdpSession.send('Page.startScreencast', {
-      format: 'jpeg',
-      quality: 85,                  // Высокое качество для Pro плана
-      maxWidth: CONFIG.WIDTH,
-      maxHeight: CONFIG.HEIGHT,
-      everyNthFrame: 1,             // Каждый кадр
-    });
-
-    log.info('CDP Screencast запущен');
-    this.isRunning = true;
-    this.screencastActive = true;
-
-    // Поддерживаем процесс активным и проверяем обновление страницы
+  /**
+   * Главный цикл - следит за состоянием
+   */
+  async runMainLoop() {
+    log.info('Главный цикл запущен');
+    
     while (this.isRunning) {
       try {
         await this.refreshPageIfNeeded();
       } catch (error) {
-        log.error('Ошибка при обновлении страницы:', error.message);
-        // Продолжаем работу, не падаем
+        log.error('Ошибка в главном цикле:', error.message);
       }
       
-      // Проверяем, приходят ли кадры от screencast
-      await this.checkAndSendFallbackFrame();
-      
-      // Логируем статистику каждые 30 секунд
-      if (this.frameCount % (CONFIG.FPS * 30) === 0 && this.frameCount > 0) {
-        log.info(`Статистика: отправлено ${this.frameCount} кадров`);
-      }
-      
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Проверка каждые 10 секунд
+      await new Promise(resolve => setTimeout(resolve, 10000));
     }
-  }
-
-  /**
-   * Проверка и отправка fallback кадра если screencast не работает
-   * Отправляет последний сохранённый кадр чтобы стрим не прерывался
-   */
-  async checkAndSendFallbackFrame() {
-    const timeSinceLastFrame = Date.now() - this.lastFrameTime;
-    const frameInterval = 1000 / CONFIG.FPS; // Интервал между кадрами в мс
-    
-    // Если кадры не приходят более 2 секунд и есть сохранённый кадр
-    if (timeSinceLastFrame > 2000 && this.lastFrame && this.ffmpeg && this.ffmpeg.stdin.writable) {
-      log.warn(`Screencast не отправляет кадры ${Math.round(timeSinceLastFrame / 1000)}с, используем fallback кадр`);
-      
-      // Отправляем несколько копий последнего кадра чтобы заполнить время
-      const framesToSend = Math.min(Math.floor(timeSinceLastFrame / frameInterval), CONFIG.FPS * 2);
-      
-      for (let i = 0; i < framesToSend; i++) {
-        this.sendFrameToFFmpeg(this.lastFrame);
-      }
-      
-      // Обновляем время, чтобы не спамить
-      this.lastFrameTime = Date.now();
-    }
-  }
-
-  /**
-   * Остановка CDP Screencast
-   */
-  async stopScreencast() {
-    this.screencastActive = false;
-    if (this.cdpSession) {
-      try {
-        await this.cdpSession.send('Page.stopScreencast');
-        await this.cdpSession.detach();
-      } catch (e) {
-        // Игнорируем ошибки при остановке
-      }
-      this.cdpSession = null;
-    }
-  }
-
-  /**
-   * Перезапуск CDP Screencast (после обновления страницы)
-   */
-  async restartScreencast() {
-    log.info('Перезапуск CDP Screencast после обновления страницы...');
-    
-    // Получаем новую CDP сессию
-    this.cdpSession = await this.page.target().createCDPSession();
-    
-    // Обработчик кадров screencast
-    this.cdpSession.on('Page.screencastFrame', async (frame) => {
-      if (!this.isRunning || !this.ffmpeg || !this.ffmpeg.stdin.writable) {
-        return;
-      }
-
-      try {
-        const frameBuffer = Buffer.from(frame.data, 'base64');
-        
-        // Сохраняем как последний кадр для fallback
-        this.lastFrame = frameBuffer;
-        this.lastFrameTime = Date.now();
-        
-        this.sendFrameToFFmpeg(frameBuffer);
-        
-        await this.cdpSession.send('Page.screencastFrameAck', {
-          sessionId: frame.sessionId,
-        });
-      } catch (error) {
-        log.error('Ошибка обработки screencast кадра:', error.message);
-      }
-    });
-
-    // Запускаем screencast
-    await this.cdpSession.send('Page.startScreencast', {
-      format: 'jpeg',
-      quality: 85,                  // Высокое качество для Pro плана
-      maxWidth: CONFIG.WIDTH,
-      maxHeight: CONFIG.HEIGHT,
-      everyNthFrame: 1,
-    });
-
-    this.screencastActive = true;
-    log.info('CDP Screencast перезапущен');
   }
 
   /**
    * Запуск стримера
    */
   async start() {
-    try {
-      log.info('========================================');
-      log.info('Запуск YouTube Website Streamer');
-      log.info('========================================');
-      log.info('Режим: CDP Screencast (Full HD)');
-      
-      await this.startBrowser();
-      await this.loadPage();
-      this.startFFmpeg();
-      
-      // Даём FFmpeg время на инициализацию
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      
-      // Используем CDP Screencast вместо screenshot loop
-      await this.startScreencast();
-      
-    } catch (error) {
-      log.error('Критическая ошибка при запуске:', error.message);
-      await this.stop();
-      throw error;
-    }
+    log.info('');
+    log.info('🚀 Запуск YouTube Website Streamer v2.0');
+    log.info('   Режим: Xvfb + x11grab (1080p30)');
+    log.info('');
+    
+    await this.startBrowser();
+    await this.loadPage();
+    this.startFFmpeg();
+    
+    // Даём FFmpeg время подключиться к YouTube
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    await this.runMainLoop();
   }
 
   /**
@@ -621,56 +390,46 @@ class WebsiteStreamer {
     log.info('Остановка стримера...');
     this.isRunning = false;
 
-    // Останавливаем CDP Screencast
-    await this.stopScreencast();
-
-    // Закрываем FFmpeg
     if (this.ffmpeg) {
-      this.ffmpeg.stdin.end();
       this.ffmpeg.kill('SIGTERM');
       this.ffmpeg = null;
     }
 
-    // Закрываем браузер
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
-      this.page = null;
     }
 
     log.info('Стример остановлен');
   }
 }
 
-// ==================== ГЛАВНАЯ ФУНКЦИЯ ====================
+// ==================== MAIN ====================
 
 async function main() {
-  // Валидация конфигурации
   validateConfig();
   
   const streamer = new WebsiteStreamer();
   
-  // Обработка сигналов завершения
+  // Graceful shutdown
   const shutdown = async (signal) => {
-    log.info(`Получен сигнал ${signal}, завершение...`);
+    log.info(`Получен ${signal}, завершение...`);
     await streamer.stop();
     process.exit(0);
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
-
-  // Обработка необработанных исключений
+  
   process.on('uncaughtException', (error) => {
-    log.error('Необработанное исключение:', error.message);
-    log.error(error.stack);
+    log.error('Uncaught exception:', error.message);
   });
 
-  process.on('unhandledRejection', (reason, promise) => {
-    log.error('Необработанный rejection:', reason);
+  process.on('unhandledRejection', (reason) => {
+    log.error('Unhandled rejection:', reason);
   });
 
-  // Цикл автоматического перезапуска
+  // Цикл с автоперезапуском
   while (true) {
     try {
       await streamer.start();
@@ -678,13 +437,12 @@ async function main() {
       log.error('Стример упал:', error.message);
       await streamer.stop();
       
-      log.info(`Перезапуск через ${CONFIG.RESTART_DELAY / 1000} секунд...`);
-      await new Promise((resolve) => setTimeout(resolve, CONFIG.RESTART_DELAY));
+      log.info(`Перезапуск через ${CONFIG.RESTART_DELAY / 1000} сек...`);
+      await new Promise(resolve => setTimeout(resolve, CONFIG.RESTART_DELAY));
     }
   }
 }
 
-// Запуск
 main().catch((error) => {
   log.error('Фатальная ошибка:', error.message);
   process.exit(1);
